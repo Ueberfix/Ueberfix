@@ -59,12 +59,28 @@ function chatBox(j){
 }
 
 function authView(){
+  if(mode==='forgot')return forgotView();
   app.innerHTML=head()+`<div class="card"><h2>${mode==='login'?'Anmelden':'Registrieren'}</h2>
   ${mode==='signup'?'<label for="role">Ich bin</label><select id="role"><option value="dealer">Händler</option><option value="driver">Überführer</option></select><label for="name">Name</label><input id="name">':''}
   <label for="em">E-Mail</label><input id="em" type="email" autocomplete="email">
   <label for="pw">Passwort</label><input id="pw" type="password" autocomplete="${mode==='login'?'current-password':'new-password'}">
   <button class="pri" data-a="auth">${mode==='login'?'Anmelden':'Konto erstellen'}</button>
+  ${mode==='login'?'<button class="link" data-a="forgot">Passwort vergessen?</button>':''}
   <button class="link" data-a="swap">${mode==='login'?'Neu hier? Registrieren':'Schon ein Konto? Anmelden'}</button></div>`;
+}
+
+function forgotView(){
+  app.innerHTML=head()+`<div class="card"><h2>Passwort zurücksetzen</h2>
+  <p class="meta">Gib deine E-Mail-Adresse ein. Wir schicken dir einen Link, mit dem du ein neues Passwort festlegst.</p>
+  <label for="em">E-Mail</label><input id="em" type="email" autocomplete="email">
+  <button class="pri" data-a="sendreset">Link senden</button>
+  <button class="link" data-a="back">Zurück zur Anmeldung</button></div>`;
+}
+function newPwView(){
+  app.innerHTML=head()+`<div class="card"><h2>Neues Passwort festlegen</h2>
+  <label for="pw1">Neues Passwort (mindestens 6 Zeichen)</label><input id="pw1" type="password" autocomplete="new-password">
+  <label for="pw2">Passwort wiederholen</label><input id="pw2" type="password" autocomplete="new-password">
+  <button class="pri" data-a="savepw">Passwort speichern</button></div>`;
 }
 
 async function dealerView(){
@@ -100,7 +116,9 @@ async function driverView(){
     <div class="row" style="margin-top:10px"><input id="cp${j.id}" type="number" min="1" inputmode="numeric" placeholder="Gegenangebot in €" aria-label="Gegenangebot in Euro"><button class="sec" data-a="cbid" data-id="${j.id}">Senden</button></div>`)+'</div>').join(''):'<div class="meta">Aktuell keine offenen Aufträge.</div>');
 }
 
+let recovery=false;
 async function show(){
+  if(recovery)return newPwView();
   if(!user)return authView();
   if(!me){app.innerHTML=head()+'<div class="card">Dein Profil wird geladen. Bitte kurz warten.</div>';return}
   if(chatOpen){const {data}=await sb.from('messages').select('*').eq('job_id',chatOpen).order('created_at');msgs=data||[]}
@@ -122,7 +140,21 @@ app.addEventListener('click',async e=>{
   const b=e.target.closest('[data-a]');if(!b)return;
   const a=b.dataset.a,id=+b.dataset.id,fail=(er)=>alert('Fehler: '+er.message);
   if(a==='swap'){mode=mode==='login'?'signup':'login';authView()}
-  else if(a==='out'){await sb.auth.signOut()}
+  else if(a==='out'){recovery=false;await sb.auth.signOut()}
+  else if(a==='forgot'){mode='forgot';authView()}
+  else if(a==='back'){mode='login';authView()}
+  else if(a==='sendreset'){
+    const email=$('em').value.trim();if(!email)return alert('Bitte E-Mail eingeben.');
+    const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    if(error)return fail(error);
+    alert('Wenn es ein Konto mit dieser E-Mail gibt, haben wir dir einen Link geschickt. Prüfe auch den Spam-Ordner.');
+    mode='login';authView()}
+  else if(a==='savepw'){
+    const p1=$('pw1').value,p2=$('pw2').value;
+    if(p1.length<6)return alert('Das Passwort braucht mindestens 6 Zeichen.');
+    if(p1!==p2)return alert('Die Passwörter sind nicht gleich.');
+    const {error}=await sb.auth.updateUser({password:p1});if(error)return fail(error);
+    alert('Dein Passwort wurde geändert.');recovery=false;mode='login';show()}
   else if(a==='auth'){
     const email=$('em').value.trim(),password=$('pw').value;
     if(mode==='login'){const {error}=await sb.auth.signInWithPassword({email,password});if(error)alert('Anmeldung fehlgeschlagen: '+error.message)}
@@ -143,8 +175,9 @@ app.addEventListener('click',async e=>{
     const {error}=await sb.from('messages').insert({job_id:id,sender_id:user.id,body});if(error)return fail(error);show()}
 });
 
-sb.auth.onAuthStateChange((ev,s)=>{if(ev==='INITIAL_SESSION'||ev==='SIGNED_IN'||ev==='SIGNED_OUT'){if((s?.user?.id||null)!==(user?.id||null)||ev==='INITIAL_SESSION')setUser(s?.user)}});
+sb.auth.onAuthStateChange((ev,s)=>{
+  if(ev==='PASSWORD_RECOVERY'){recovery=true;setUser(s?.user);return}
+  if(ev==='INITIAL_SESSION'||ev==='SIGNED_IN'||ev==='SIGNED_OUT'){if((s?.user?.id||null)!==(user?.id||null)||ev==='INITIAL_SESSION')setUser(s?.user)}});
 </script>
 </body>
 </html>
-
