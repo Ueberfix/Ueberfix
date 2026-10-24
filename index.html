@@ -54,8 +54,10 @@ button{font:inherit;font-weight:600;border-radius:8px;padding:10px 14px;cursor:p
 .doc h3{margin:16px 0 4px}.doc p,.doc li{margin:4px 0}.doc ul{padding-left:20px}
 .doc details{border-top:1px solid var(--line);padding:10px 0}.doc summary{font-weight:600;cursor:pointer}
 .ph{background:rgba(200,40,30,.16);padding:0 4px;border-radius:4px}
-.wallet{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.wallet b{font-size:22px}
+.ths{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin:8px 0}
+.th{margin:0;font-size:12px;color:var(--mute)}
+.th img{width:100%;height:84px;object-fit:cover;border-radius:6px;display:block}
+.th .sec{padding:2px 8px;font-size:13px;margin-top:3px}
 </style>
 </head>
 <body>
@@ -79,10 +81,10 @@ const app=document.getElementById('app'),$=i=>document.getElementById(i);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const eur=c=>(c/100).toLocaleString('de-DE')+' €';
 const day=s=>s.split('-').reverse().join('.');
-let user=null,me=null,mode='login',chatOpen=null,msgs=[],chan=null,unread={},totalUnread=0;
+let user=null,me=null,mode='login',chatOpen=null,msgs=[],chan=null,unread={},totalUnread=0,isAdmin=false,adminOn=false,protos={},drafts={},vfiles={},vconsent=false;
 
 const ICON='<svg width="40" height="40" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#0B3D91"/><path d="M30 38V58a20 20 0 0 0 40 0V38" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="30" cy="22" r="6.5" fill="#C8281E"/><circle cx="70" cy="22" r="6.5" fill="#C8281E"/></svg>';
-const head=()=>`<header>${ICON}<h1>Überfix</h1>${totalUnread?`<span class="badge red" style="margin:0 8px 0 0">${totalUnread} neu</span>`:''}${user?'<button class="sec" data-a="out">Abmelden</button>':''}</header>`;
+const head=()=>`<header>${ICON}<h1>Überfix</h1>${totalUnread?`<span class="badge red" style="margin:0 8px 0 0">${totalUnread} neu</span>`:''}${isAdmin?`<button class="sec" style="margin-right:6px" data-a="admin">${adminOn?'Zurück':'Admin'}</button>`:''}${user?'<button class="sec" data-a="out">Abmelden</button>':''}</header>`;
 const jobHead=j=>`<div class="top"><div><h3>${esc(j.car)}</h3><div class="meta">${esc(j.from_city)} nach ${esc(j.to_city)} · ${day(j.pickup_date)}</div></div><div class="plate">${eur(j.price_cents)}</div></div>`;
 
 function chatBox(j){
@@ -118,39 +120,34 @@ function newPwView(){
 }
 
 async function dealerView(){
-  const [{data:jobs},{data:sub},{data:wal}]=await Promise.all([
+  const [{data:jobs},{data:sub}]=await Promise.all([
     sb.from('jobs').select('*,bids(id,price_cents,profiles(name))').order('created_at',{ascending:false}),
-    sb.from('dealer_subscriptions').select('status').eq('dealer_id',user.id).maybeSingle(),
-    sb.from('dealer_wallets').select('balance_cents').eq('dealer_id',user.id).maybeSingle()]);
-  const balance=wal?wal.balance_cents:0;
+    sb.from('dealer_subscriptions').select('status').eq('dealer_id',user.id).maybeSingle()]);
   const active=sub&&sub.status==='active';
   app.innerHTML=head()+`<p class="meta">Angemeldet als ${esc(me.name)} (Händler)</p>`+
   (active?'':'<div class="card warn"><b>Kein aktives Abo</b><div class="meta">Ohne aktives Abo kannst du keine Aufträge einstellen.</div></div>')+
-  `<div class="card"><div class="wallet"><div><div class="meta">Dein Guthaben</div><b>${eur(balance)}</b></div></div>
-  <div class="row" style="margin-top:10px"><input id="topamt" type="number" min="1" max="1000" inputmode="numeric" placeholder="Betrag in €" aria-label="Aufladebetrag in Euro"><button class="sec" data-a="topup">Aufladen</button></div>
-  <div class="meta" style="margin-top:6px">Testmodus: Die Aufladung ist simuliert. Mit dem Zahlungsanbieter kommen PayPal, Karte, SEPA und Klarna. Bei Annahme eines Angebots wird der Betrag reserviert.</div></div>
-  <div class="card"><h2>Neuen Auftrag einstellen</h2>
+  `<div class="card"><h2>Neuen Auftrag einstellen</h2>
   <label for="car">Fahrzeug</label><input id="car" placeholder="z. B. Mercedes C 220 d">
   <div class="row"><div><label for="from">Abholort</label><input id="from"></div><div><label for="to">Zielort</label><input id="to"></div></div>
   <div class="row"><div><label for="date">Datum</label><input id="date" type="date"></div><div><label for="price">Dein Preis (€)</label><input id="price" type="number" min="1" inputmode="numeric"></div></div>
   <button class="pri" data-a="post">Auftrag veröffentlichen</button></div><h2>Deine Aufträge</h2>`+
   ((jobs||[]).length?jobs.map(j=>{const isOpen=j.status==='open',fin=j.status==='completed';
-    return `<div class="card">${jobHead(j)}<span class="badge ${isOpen?'':'ok'}">${isOpen?'Offen · '+j.bids.length+' Angebote':fin?'Erledigt · Auszahlung freigegeben':'Vergeben für '+eur(j.agreed_price_cents)+' · Geld reserviert'}</span>`+
+    return `<div class="card">${jobHead(j)}<span class="badge ${isOpen?'':'ok'}">${isOpen?'Offen · '+j.bids.length+' Angebote':fin?'Erledigt · Auszahlung freigegeben':'Vergeben für '+eur(j.agreed_price_cents)}</span>`+
     (isOpen?j.bids.map(b=>`<div class="bid"><div><b>${esc(b.profiles?.name)}</b><div class="meta">bietet ${eur(b.price_cents)}</div></div><button class="sec" data-a="acc" data-id="${b.id}">Annehmen</button></div>`).join(''):
-      (fin?'':`<button class="pri" data-a="done" data-id="${j.id}">Auftrag erledigt</button><div class="meta" style="margin-top:4px">Damit gibst du das reservierte Geld zur Auszahlung an den Überführer frei.</div>`)+chatBox(j))+'</div>'}).join(''):'<div class="meta">Noch keine Aufträge.</div>');
+      (fin?'':`<button class="pri" data-a="done" data-id="${j.id}">Auftrag erledigt</button><div class="meta" style="margin-top:4px">Damit meldest du den Auftrag als erledigt, und die Auszahlung an den Überführer kann veranlasst werden.</div>`)+protoBox(j,'h')+chatBox(j))+'</div>'}).join(''):'<div class="meta">Noch keine Aufträge.</div>');
 }
 
 async function driverView(){
   const [{data:ver},{data:open},{data:mine},{data:bids}]=await Promise.all([
-    sb.from('driver_verifications').select('status').eq('driver_id',user.id).maybeSingle(),
+    sb.from('driver_verifications').select('status,review_note').eq('driver_id',user.id).maybeSingle(),
     sb.from('jobs').select('*').eq('status','open').order('pickup_date'),
     sb.from('jobs').select('*').eq('assigned_driver_id',user.id),
     sb.from('bids').select('job_id').eq('driver_id',user.id)]);
   const ok=ver&&ver.status==='approved',sent=new Set((bids||[]).map(b=>b.job_id));
   const label={none:'noch nicht eingereicht',pending:'in Prüfung',rejected:'abgelehnt'}[ver?.status];
   app.innerHTML=head()+`<p class="meta">Angemeldet als ${esc(me.name)} (Überführer)</p>`+
-  (ok?'<span class="badge ok">Verifiziert</span>':`<div class="card warn"><b>Noch nicht freigeschaltet</b><div class="meta">Status: ${label||'unbekannt'}. Offene Aufträge siehst du erst nach der Freischaltung.</div></div>`)+
-  ((mine||[]).length?'<h2 style="margin-top:14px">Meine Aufträge</h2>'+mine.map(j=>`<div class="card">${jobHead(j)}<span class="badge ok">${j.status==='completed'?'Erledigt · Auszahlung von '+eur(Math.round(j.agreed_price_cents*0.9))+' wird veranlasst':'Zugesagt für '+eur(j.agreed_price_cents)}</span>${chatBox(j)}</div>`).join(''):'')+
+  (ok?'<span class="badge ok">Verifiziert</span>':verifCard(ver))+
+  ((mine||[]).length?'<h2 style="margin-top:14px">Meine Aufträge</h2>'+mine.map(j=>`<div class="card">${jobHead(j)}<span class="badge ok">${j.status==='completed'?'Erledigt · Auszahlung von '+eur(Math.round(j.agreed_price_cents*0.9))+' wird veranlasst':'Zugesagt für '+eur(j.agreed_price_cents)}</span>${protoBox(j,'f')}${chatBox(j)}</div>`).join(''):'')+
   '<h2 style="margin-top:14px">Offene Aufträge</h2>'+
   ((open||[]).length?open.map(j=>`<div class="card">${jobHead(j)}<div class="meta" style="margin:6px 0">Auszahlung für dich: ${eur(Math.round(j.price_cents*0.9))} nach 10 % Servicegebühr</div>`+
     (sent.has(j.id)?'<span class="badge red">Dein Angebot liegt vor</span>':`<div class="row"><button class="pri" style="margin-top:4px" data-a="bid" data-id="${j.id}" data-p="${j.price_cents}">Für ${eur(j.price_cents)} anbieten</button></div>
@@ -159,7 +156,7 @@ async function driverView(){
 
 let recovery=false;
 async function show(){
-  const ae=document.activeElement,keep=ae&&/^m\d+$/.test(ae.id||'')?ae.id:null,val=keep?ae.value:'';
+  const ae=document.activeElement,keep=ae&&ae.id&&((ae.tagName==='INPUT'&&ae.type!=='file')||ae.tagName==='SELECT')?ae.id:null,val=keep?ae.value:'';
   await showInner();
   if(keep){const n=$(keep);if(n){n.value=val;n.focus()}}
 }
@@ -173,11 +170,12 @@ async function showInner(){
   const {data:un}=await sb.from('messages').select('job_id').is('read_at',null).neq('sender_id',user.id);
   unread={};(un||[]).forEach(m=>{unread[m.job_id]=(unread[m.job_id]||0)+1});
   totalUnread=(un||[]).length;document.title=(totalUnread?'('+totalUnread+') ':'')+'Überfix';
-  await(me.role==='dealer'?dealerView():driverView());
+  protos=await loadProtos();
+  await(isAdmin&&adminOn?adminView():me.role==='dealer'?dealerView():driverView());
 }
 async function setUser(u){
-  user=u||null;me=null;chatOpen=null;
-  if(user){const {data}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();me=data}
+  user=u||null;me=null;chatOpen=null;isAdmin=false;adminOn=false;
+  if(user){const {data}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();me=data;const {data:ad}=await sb.from('admins').select('user_id').eq('user_id',user.id).maybeSingle();isAdmin=!!ad}
   if(chan){sb.removeChannel(chan);chan=null}
   if(user)chan=sb.channel('msgs').on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},()=>show()).subscribe();
   await show();
@@ -186,6 +184,73 @@ async function toggleChat(id){
   chatOpen=chatOpen===id?null:id;
   await show();
 }
+
+const LOC=['Front','Heck','Links','Rechts','Dach','Innenraum'],TYP=['Übersicht (kein Schaden)','Kratzer','Delle','Steinschlag','Lackschaden','Sonstiges'],PH={pickup:'Bei Abholung',drop:'Bei Ablieferung'};
+const dr=k=>drafts[k]=drafts[k]||{km:'',fuel:'Voll',note:'',loc:'Front',type:TYP[0],photos:[]};
+const opt=(arr,v)=>arr.map(o=>`<option${o===v?' selected':''}>${esc(o)}</option>`).join('');
+function shrink(file,max){return new Promise((res,rej)=>{const im=new Image(),u=URL.createObjectURL(file);
+  im.onload=()=>{const k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
+    c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?res(b):rej(new Error('Bild konnte nicht verarbeitet werden')),'image/jpeg',.82)};
+  im.onerror=()=>rej(new Error('Bild konnte nicht gelesen werden'));im.src=u})}
+async function loadProtos(){
+  const {data}=await sb.from('handover_protocols').select('*,damage_photos(*)').order('created_at');
+  const map={},paths=[];
+  (data||[]).forEach(p=>{(map[p.job_id]=map[p.job_id]||{})[p.phase]=p;(p.damage_photos||[]).forEach(d=>paths.push(d.storage_path))});
+  if(paths.length){const {data:su}=await sb.storage.from('protocol-photos').createSignedUrls(paths,3600);const m={};
+    (su||[]).forEach(x=>{if(x.signedUrl)m[x.path]=x.signedUrl});(data||[]).forEach(p=>(p.damage_photos||[]).forEach(d=>{d.url=m[d.storage_path]}))}
+  return map}
+function thumbs(list,rm,key){return `<div class="ths">${list.map((x,i)=>`<figure class="th"><a href="${x.url}" target="_blank" rel="noopener"><img src="${x.url}" alt="${esc(x.type)} ${esc(x.loc)}"></a><figcaption>${esc(x.type)}, ${esc(x.loc)}</figcaption>${rm?`<button class="sec" data-a="prm" data-k="${key}" data-i="${i}">Entfernen</button>`:''}</figure>`).join('')}</div>`}
+function protoBox(j,me){
+  let h='<h3 style="margin-top:14px">Übergabeprotokoll</h3>';
+  ['pickup','drop'].forEach(ph=>{
+    const p=(protos[j.id]||{})[ph],key=j.id+':'+ph,idp=j.id+'_'+ph;
+    h+=`<div class="card" style="margin:8px 0 0;background:var(--bg)"><b>${PH[ph]}</b> `;
+    if(p){h+=`<span class="badge ok">Abgeschlossen ${new Date(p.created_at).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'})}</span><div class="meta">${p.odometer_km} km · Tank: ${esc(p.fuel)}${p.note?' · '+esc(p.note):''}</div>`+
+      thumbs((p.damage_photos||[]).filter(d=>d.url).map(d=>({loc:d.location,type:d.damage_type,url:d.url})),false)}
+    else if(me==='f'&&j.status==='assigned'&&(ph==='pickup'||(protos[j.id]||{}).pickup)){const d=dr(key);
+      h+=`<label for="km_${idp}">Kilometerstand</label><input id="km_${idp}" type="number" min="0" inputmode="numeric" data-f="${key}:km" value="${esc(d.km)}">
+      <label for="fu_${idp}">Tankstand</label><select id="fu_${idp}" data-f="${key}:fuel">${opt(['Voll','3/4','1/2','1/4','Reserve'],d.fuel)}</select>
+      <label>Fotos aufnehmen: Stelle, Art, dann Foto. Pflicht: Übersicht von Front, Heck, Links und Rechts. Vorhandene Schäden einzeln fotografieren.</label>
+      <div class="row"><select id="lo_${idp}" data-f="${key}:loc" aria-label="Stelle am Fahrzeug">${opt(LOC,d.loc)}</select><select id="ty_${idp}" data-f="${key}:type" aria-label="Art">${opt(TYP,d.type)}</select></div>
+      <input type="file" accept="image/*" capture="environment" data-ph="${key}" aria-label="Foto aufnehmen" style="margin-top:8px">
+      ${d.photos.length?thumbs(d.photos,true,key):''}
+      <label for="no_${idp}">Anmerkung</label><input id="no_${idp}" data-f="${key}:note" value="${esc(d.note)}" placeholder="optional">
+      <button class="pri" data-a="pdone" data-k="${key}">Protokoll abschließen</button>`}
+    else h+='<div class="meta">Noch nicht ausgefüllt.</div>';
+    h+='</div>'});
+  return h}
+function verifCard(v){const st=v?v.status:'none';
+  if(st==='pending')return '<div class="card"><b>Deine Unterlagen werden geprüft</b><div class="meta">Du wirst freigeschaltet, sobald die Prüfung abgeschlossen ist.</div></div>';
+  const f=k=>vfiles[k]?`<div class="meta">Ausgewählt: ${esc(vfiles[k].name)}</div>`:'';
+  return `<div class="card warn"><h2>Verifizierung</h2>${st==='rejected'?`<span class="badge red">Abgelehnt${v.review_note?': '+esc(v.review_note):''}</span>`:''}
+  <div class="meta">Lade fünf Dokumente hoch (Foto oder PDF). Sie werden nur zur Prüfung verwendet und direkt danach gelöscht.</div>
+  <label for="vf1">Ausweis (Vorder- und Rückseite)</label><input id="vf1" type="file" accept="image/*,application/pdf" data-vf="ausweis">${f('ausweis')}
+  <label for="vf2">Führerschein (Vorder- und Rückseite)</label><input id="vf2" type="file" accept="image/*,application/pdf" data-vf="fuehrerschein">${f('fuehrerschein')}
+  <label for="vf3">Aktuelle Strom- oder Gasrechnung (höchstens 3 Monate alt)</label><input id="vf3" type="file" accept="image/*,application/pdf" data-vf="wohnsitz">${f('wohnsitz')}
+  <label for="vf4">Gewerbeanmeldung bzw. Gewerbeschein</label><input id="vf4" type="file" accept="image/*,application/pdf" data-vf="gewerbe">${f('gewerbe')}
+  <label for="vf5">Polizeiliches Führungszeugnis (höchstens 3 Monate alt)</label><input id="vf5" type="file" accept="image/*,application/pdf" data-vf="fuehrungszeugnis">${f('fuehrungszeugnis')}
+  <label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;font-size:14px"><input type="checkbox" data-vc style="width:auto;margin-top:3px"${vconsent?' checked':''}><span>Ich willige ein, dass Überfix diese Dokumente, auch das Führungszeugnis, einmalig zur Prüfung ansieht. Danach werden sie gelöscht.</span></label>
+  <button class="pri" data-a="vsubmit">Zur Prüfung einreichen</button></div>`}
+let pendPaths={};
+async function adminView(){
+  const {data}=await sb.from('driver_verifications').select('driver_id,doc_paths,submitted_at,profiles(name)').eq('status','pending').order('submitted_at');
+  const list=data||[],paths=list.flatMap(r=>Object.values(r.doc_paths||{})),urls={};
+  if(paths.length){const {data:su}=await sb.storage.from('verification-docs').createSignedUrls(paths,900);(su||[]).forEach(x=>{if(x.signedUrl)urls[x.path]=x.signedUrl})}
+  const L={ausweis:'Ausweis',fuehrerschein:'Führerschein',wohnsitz:'Wohnsitznachweis',gewerbe:'Gewerbeschein',fuehrungszeugnis:'Führungszeugnis'};
+  pendPaths=Object.fromEntries(list.map(r=>[r.driver_id,Object.values(r.doc_paths||{})]));
+  app.innerHTML=head()+'<h2>Admin: Überführer prüfen</h2>'+(list.length?list.map(r=>`<div class="card"><b>${esc(r.profiles?.name)}</b><div class="meta">eingereicht ${new Date(r.submitted_at).toLocaleString('de-DE')}</div>
+    <div style="margin:8px 0">${Object.entries(r.doc_paths||{}).map(([k,p])=>urls[p]?`<a href="${urls[p]}" target="_blank" rel="noopener">${L[k]||k} ansehen</a>`:'').join(' · ')}</div>
+    <label for="n${r.driver_id}">Notiz bei Ablehnung</label><input id="n${r.driver_id}" placeholder="z. B. Foto unleserlich">
+    <div class="row" style="margin-top:8px"><button class="pri" style="margin:0" data-a="vok" data-d="${r.driver_id}">Freigeben</button><button class="sec" data-a="vno" data-d="${r.driver_id}">Ablehnen</button></div></div>`).join(''):'<div class="meta">Keine offenen Anträge.</div>');
+}
+app.addEventListener('change',async e=>{const t=e.target;if(!t.dataset)return;
+  try{
+    if('vc' in t.dataset){vconsent=t.checked;return}
+    if(t.dataset.vf){vfiles[t.dataset.vf]=t.files[0]||null;show();return}
+    if(t.dataset.ph&&t.files&&t.files[0]){const d=drafts[t.dataset.ph];if(!d)return;const blob=await shrink(t.files[0],1600);
+      d.photos.push({loc:d.loc,type:d.type,blob,url:URL.createObjectURL(blob)});show()}
+  }catch(er){alert('Fehler: '+er.message)}});
+app.addEventListener('input',e=>{const t=e.target;if(t.dataset&&t.dataset.f){const [jid,ph,f]=t.dataset.f.split(':'),d=drafts[jid+':'+ph];if(d)d[f]=t.value}});
 
 app.addEventListener('click',async e=>{
   const b=e.target.closest('[data-a]');if(!b)return;
@@ -221,11 +286,40 @@ app.addEventListener('click',async e=>{
   else if(a==='bid'){const {error}=await sb.from('bids').insert({job_id:id,driver_id:user.id,price_cents:+b.dataset.p});if(error)return fail(error);show()}
   else if(a==='cbid'){const p=Math.round(+$('cp'+id).value*100);if(!(p>0))return alert('Bitte einen Preis eingeben.');
     const {error}=await sb.from('bids').insert({job_id:id,driver_id:user.id,price_cents:p});if(error)return fail(error);show()}
-  else if(a==='topup'){const cents=Math.round(+$('topamt').value*100);
-    if(!(cents>=100&&cents<=100000))return alert('Bitte einen Betrag zwischen 1 € und 1.000 € eingeben.');
-    const {error}=await sb.rpc('demo_topup',{p_amount_cents:cents});if(error)return fail(error);show()}
-  else if(a==='done'){if(!confirm('Auftrag als erledigt melden? Das reservierte Geld wird dann an den Überführer zur Auszahlung freigegeben.'))return;
+  else if(a==='done'){const noDrop=!(protos[id]||{}).drop;if(!confirm((noDrop?'Es liegt noch kein Ablieferungs-Protokoll mit Fotos vor. ':'')+'Auftrag als erledigt melden? Danach wird die Auszahlung an den Überführer veranlasst.'))return;
     const {error}=await sb.rpc('complete_job',{p_job_id:id});if(error)return fail(error);show()}
+  else if(a==='admin'){adminOn=!adminOn;show()}
+  else if(a==='vsubmit'){const ks=['ausweis','fuehrerschein','wohnsitz','gewerbe','fuehrungszeugnis'];
+    if(ks.some(k=>!vfiles[k]))return alert('Bitte alle fünf Dokumente auswählen.');
+    if(!vconsent)return alert('Bitte stimme der Prüfung deiner Dokumente zu.');
+    b.disabled=true;b.textContent='Wird hochgeladen …';
+    try{const paths={};
+      for(const k of ks){const f=vfiles[k];let blob=f,ext='pdf',ct='application/pdf';
+        if(f.type.startsWith('image/')){blob=await shrink(f,2000);ext='jpg';ct='image/jpeg'}else if(f.type!=='application/pdf')throw new Error('Nur Fotos oder PDF sind erlaubt.');
+        const path=`${user.id}/${k}-${Date.now()}.${ext}`;
+        const {error}=await sb.storage.from('verification-docs').upload(path,blob,{contentType:ct,upsert:false});if(error)throw error;paths[k]=path}
+      const {error}=await sb.rpc('submit_verification',{p_paths:paths});if(error)throw error;vfiles={};vconsent=false}
+    catch(er){alert('Fehler: '+er.message)}
+    show()}
+  else if(a==='vok'||a==='vno'){const did=b.dataset.d,ok=a==='vok',note=(!ok&&$('n'+did).value.trim())||null;
+    if(!confirm(ok?'Überführer freigeben?':'Antrag ablehnen?'))return;
+    const {error}=await sb.rpc('review_driver',{p_driver_id:did,p_approve:ok,p_note:note});if(error)return fail(error);
+    const ps=pendPaths[did]||[];if(ps.length)await sb.storage.from('verification-docs').remove(ps);show()}
+  else if(a==='prm'){const d=drafts[b.dataset.k];if(d){const x=d.photos.splice(+b.dataset.i,1)[0];if(x)URL.revokeObjectURL(x.url)}show()}
+  else if(a==='pdone'){const k=b.dataset.k,[jid,ph]=k.split(':'),d=drafts[k];
+    if(!d||d.km==='')return alert('Bitte den Kilometerstand eintragen.');
+    const need=['Front','Heck','Links','Rechts'].filter(l=>!d.photos.some(p=>p.loc===l&&p.type===TYP[0]));
+    if(need.length)return alert('Es fehlen Übersichtsfotos: '+need.join(', ')+'. Wähle dazu bei „Art“ den Eintrag „Übersicht (kein Schaden)“.');
+    if(!confirm('Protokoll abschließen? Danach kann es nicht mehr geändert werden.'))return;
+    b.disabled=true;b.textContent='Wird hochgeladen …';
+    try{const up=[];
+      for(let i=0;i<d.photos.length;i++){const p=d.photos[i],path=`${jid}/${ph}/${Date.now()}-${i}.jpg`;
+        const {error}=await sb.storage.from('protocol-photos').upload(path,p.blob,{contentType:'image/jpeg',upsert:false});if(error)throw error;up.push({path,p})}
+      const {data:pr,error:e2}=await sb.from('handover_protocols').insert({job_id:+jid,phase:ph,driver_id:user.id,odometer_km:+d.km,fuel:d.fuel,note:d.note||null}).select('id').single();if(e2)throw e2;
+      const {error:e3}=await sb.from('damage_photos').insert(up.map(x=>({protocol_id:pr.id,location:x.p.loc,damage_type:x.p.type,storage_path:x.path})));if(e3)throw e3;
+      d.photos.forEach(p=>URL.revokeObjectURL(p.url));delete drafts[k]}
+    catch(er){alert('Fehler: '+er.message)}
+    show()}
   else if(a==='chat'){toggleChat(id)}
   else if(a==='send'){const body=$('m'+id).value.trim();if(!body)return;
     const {error}=await sb.from('messages').insert({job_id:id,sender_id:user.id,body});if(error)return fail(error);show()}
@@ -234,25 +328,24 @@ app.addEventListener('click',async e=>{
 const PAGES={
 ueber:{t:'Über uns',h:`<p><b>Einfach. Direkt. Persönlich.</b></p>
 <p>Überfix bringt Autohändler und selbstständige Fahrer zusammen. Der Händler stellt einen Auftrag mit seinem Preis ein, ein geprüfter Überführer nimmt ihn an, das Fahrzeug wird sicher von A nach B gebracht.</p>
-<ul><li>Ein Fahrer. Kein Transportunternehmen.</li><li>Keine LKWs und keine Speditionen.</li><li>Der Betrag wird bei Auftragsannahme reserviert und nach der Übergabe ausgezahlt.</li></ul>
+<ul><li>Ein Fahrer. Kein Transportunternehmen.</li><li>Keine LKWs und keine Speditionen.</li><li>Die Zahlung läuft sicher über einen Zahlungsanbieter und wird nach der Übergabe ausgezahlt.</li></ul>
 <p><b>Dein Weg. Unser Auftrag.</b></p>`},
-support:{t:'Support',h:`<p>Wir helfen bei Fragen zu Aufträgen, Guthaben und Verifizierung.</p>
+support:{t:'Support',h:`<p>Wir helfen bei Fragen zu Aufträgen, Zahlung und Verifizierung.</p>
 <p>E-Mail: <span class="ph">[support@deine-domain.de]</span><br>Erreichbar: <span class="ph">[Zeiten festlegen]</span></p>
 <h3>Häufige Fragen</h3>
-<details><summary>Wie lade ich Guthaben auf?</summary><p>Händler laden ihr Konto oben im Händlerbereich auf. Bei Annahme eines Angebots wird der Auftragsbetrag aus dem Guthaben reserviert.</p></details>
 <details><summary>Wann bekommt der Überführer sein Geld?</summary><p>Sobald der Händler den Auftrag als erledigt meldet, wird der Betrag abzüglich 10 % Servicegebühr zur Auszahlung freigegeben.</p></details>
 <details><summary>Was kostet Überfix?</summary><p>Händler zahlen 9,99 € pro Monat im ersten Jahr, danach 14,99 €. Für Überführer ist die Nutzung kostenlos, es werden 10 % pro Auftrag einbehalten.</p></details>
 <details><summary>Ich habe mein Passwort vergessen.</summary><p>Tippe bei der Anmeldung auf „Passwort vergessen?" und folge dem Link in der E-Mail.</p></details>
-<details><summary>Wie werde ich als Überführer freigeschaltet?</summary><p>Nach der Prüfung deiner Unterlagen (Ausweis, Führerschein, Wohnsitznachweis) wirst du freigeschaltet und siehst offene Aufträge.</p></details>`},
+<details><summary>Wie werde ich als Überführer freigeschaltet?</summary><p>Nach der Prüfung deiner Unterlagen (Ausweis, Führerschein, Wohnsitznachweis, Gewerbeschein, Führungszeugnis) wirst du freigeschaltet und siehst offene Aufträge.</p></details>`},
 kontakt:{t:'Kontakt',h:`<p>Du erreichst uns so:</p>
 <p>E-Mail: <span class="ph">[E-Mail-Adresse]</span><br>Telefon: <span class="ph">[Telefonnummer]</span><br>Anschrift: <span class="ph">[Straße, PLZ Ort]</span></p>
 <p class="meta">Für Fragen zu Aufträgen und Zahlungen nutze bitte den Support.</p>`},
 agb:{t:'Allgemeine Geschäftsbedingungen',h:`<p class="meta">Entwurf zur Orientierung. Lass ihn vor dem Start anwaltlich prüfen. Rot markierte Stellen sind offen.</p>
 <h3>1. Geltungsbereich</h3><p>Diese AGB gelten für die Nutzung der Plattform Überfix durch Autohändler und Überführer. Die Plattform richtet sich nur an Unternehmer (§ 14 BGB).</p>
 <h3>2. Rolle von Überfix</h3><p>Überfix vermittelt zwischen Händlern und Überführern. Der Überführungsvertrag kommt nur zwischen Händler und Überführer zustande.</p>
-<h3>3. Registrierung</h3><p>Überführer müssen Ausweis, Führerschein und einen aktuellen Wohnsitznachweis vorlegen. Aufträge sehen sie erst nach der Freischaltung.</p>
+<h3>3. Registrierung</h3><p>Überführer müssen Ausweis, Führerschein, einen aktuellen Wohnsitznachweis, einen Gewerbeschein und ein aktuelles Führungszeugnis vorlegen. Aufträge sehen sie erst nach der Freischaltung.</p>
 <h3>4. Preise und Gebühren</h3><ul><li>Händler: 9,99 € pro Monat im ersten Jahr, danach 14,99 € pro Monat <span class="ph">[netto oder brutto klären]</span>.</li><li>Überführer: kostenlose Registrierung, 10 % Servicegebühr pro Auftrag.</li></ul>
-<h3>5. Guthaben und Zahlung</h3><p>Händler laden ein Guthaben auf. Bei Annahme eines Angebots wird der Betrag reserviert. Meldet der Händler den Auftrag als erledigt, wird der Betrag abzüglich der Servicegebühr an den Überführer ausgezahlt.</p>
+<h3>5. Zahlung</h3><p>Die Zahlung des Händlers läuft über einen Zahlungsanbieter <span class="ph">[Anbieter, ab Start]</span>. Meldet der Händler den Auftrag als erledigt, wird der Betrag abzüglich der Servicegebühr an den Überführer ausgezahlt.</p>
 <h3>6. Haftung und Versicherung</h3><p>Der Überführer fährt eigenverantwortlich und benötigt ausreichenden Versicherungsschutz <span class="ph">[festlegen]</span>. Die Haftung von Überfix ist beschränkt <span class="ph">[anwaltlich prüfen]</span>.</p>
 <h3>7. Laufzeit und Kündigung</h3><p><span class="ph">[Laufzeit und Kündigungsfrist festlegen]</span></p>
 <h3>8. Schlussbestimmungen</h3><p>Es gilt deutsches Recht. Ist eine Bestimmung unwirksam, bleibt der Rest wirksam.</p>`},
@@ -263,7 +356,7 @@ impressum:{t:'Impressum',h:`<p class="meta">Rot markierte Felder musst du mit de
 <h3>Verantwortlich für den Inhalt</h3><p><span class="ph">[Name und Anschrift]</span></p>`},
 datenschutz:{t:'Datenschutzerklärung',h:`<p class="meta">Entwurf zur Orientierung. Lass ihn vor dem Start rechtlich prüfen.</p>
 <h3>Verantwortlicher</h3><p>Überfix, <span class="ph">[Name, Anschrift, E-Mail]</span></p>
-<h3>Welche Daten wir verarbeiten</h3><ul><li>Konto: Name, E-Mail, Firma bzw. Region.</li><li>Aufträge, Angebote und Chat-Nachrichten zur Vertragsabwicklung.</li><li>Guthaben und Zahlungsdaten (Beträge, Status). Karten- und Kontodaten verarbeitet nur der Zahlungsanbieter.</li><li>Überführer: Ausweis, Führerschein und Wohnsitznachweis zur Prüfung. Nach der Prüfung löschen wir die Dokumente <span class="ph">[Frist]</span>.</li></ul>
+<h3>Welche Daten wir verarbeiten</h3><ul><li>Konto: Name, E-Mail, Firma bzw. Region.</li><li>Aufträge, Angebote und Chat-Nachrichten zur Vertragsabwicklung.</li><li>Zahlungsdaten (Beträge, Status). Karten- und Kontodaten verarbeitet nur der Zahlungsanbieter.</li><li>Überführer: Ausweis, Führerschein, Wohnsitznachweis, Gewerbeschein und Führungszeugnis zur Prüfung auf Grundlage deiner Einwilligung. Die Dokumente werden direkt nach der Prüfung gelöscht, gespeichert wird nur das Ergebnis.</li></ul>
 <h3>Dienstleister</h3><p>Hosting und Datenbank <span class="ph">[Anbieter, Standort]</span>, Zahlungsabwicklung <span class="ph">[Anbieter]</span>, Identitätsprüfung <span class="ph">[Anbieter]</span>.</p>
 <h3>Speicherdauer</h3><p>Bis zur Löschung des Kontos, Rechnungen und Belege nach den gesetzlichen Fristen.</p>
 <h3>Deine Rechte</h3><p>Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit, Widerspruch und Beschwerde bei der Aufsichtsbehörde <span class="ph">[zuständige Behörde]</span>.</p>`}
