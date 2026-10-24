@@ -131,23 +131,24 @@ async function dealerView(){
   <div class="row"><div><label for="from">Abholort</label><input id="from"></div><div><label for="to">Zielort</label><input id="to"></div></div>
   <div class="row"><div><label for="date">Datum</label><input id="date" type="date"></div><div><label for="price">Dein Preis (€)</label><input id="price" type="number" min="1" inputmode="numeric"></div></div>
   <button class="pri" data-a="post">Auftrag veröffentlichen</button></div><h2>Deine Aufträge</h2>`+
-  ((jobs||[]).length?jobs.map(j=>{const isOpen=j.status==='open',fin=j.status==='completed';
-    return `<div class="card">${jobHead(j)}<span class="badge ${isOpen?'':'ok'}">${isOpen?'Offen · '+j.bids.length+' Angebote':fin?'Erledigt · Auszahlung freigegeben':'Vergeben für '+eur(j.agreed_price_cents)}</span>`+
+  ((jobs||[]).length?jobs.map(j=>{const isOpen=j.status==='open',fin=j.status==='completed',asg=j.status==='assigned';
+    return `<div class="card">${jobHead(j)}<span class="badge ${isOpen?'':'ok'}">${isOpen?'Offen · '+j.bids.length+' Angebote':fin?'Erledigt · Auszahlung freigegeben':asg?'Vergeben für '+eur(j.agreed_price_cents)+' · Zahlung offen':'Bezahlt · Auszahlung nach „Auftrag erledigt“'}</span>`+
     (isOpen?j.bids.map(b=>`<div class="bid"><div><b>${esc(b.profiles?.name)}</b><div class="meta">bietet ${eur(b.price_cents)}</div></div><button class="sec" data-a="acc" data-id="${b.id}">Annehmen</button></div>`).join(''):
-      (fin?'':`<button class="pri" data-a="done" data-id="${j.id}">Auftrag erledigt</button><div class="meta" style="margin-top:4px">Damit meldest du den Auftrag als erledigt, und die Auszahlung an den Überführer kann veranlasst werden.</div>`)+protoBox(j,'h')+chatBox(j))+'</div>'}).join(''):'<div class="meta">Noch keine Aufträge.</div>');
+      (fin?'':asg?`<button class="pri" data-a="pay" data-id="${j.id}">Jetzt bezahlen: ${eur(j.agreed_price_cents)}</button><div class="meta" style="margin-top:4px">Die Zahlung läuft sicher über Stripe. Danach kann der Überführer starten.</div>`:`<button class="pri" data-a="done" data-id="${j.id}">Auftrag erledigt</button><div class="meta" style="margin-top:4px">Damit meldest du den Auftrag als erledigt, und die Auszahlung an den Überführer kann veranlasst werden.</div>`)+protoBox(j,'h')+chatBox(j))+'</div>'}).join(''):'<div class="meta">Noch keine Aufträge.</div>');
 }
 
 async function driverView(){
-  const [{data:ver},{data:open},{data:mine},{data:bids}]=await Promise.all([
+  const [{data:ver},{data:open},{data:mine},{data:bids},{data:sa}]=await Promise.all([
     sb.from('driver_verifications').select('status,review_note').eq('driver_id',user.id).maybeSingle(),
     sb.from('jobs').select('*').eq('status','open').order('pickup_date'),
     sb.from('jobs').select('*').eq('assigned_driver_id',user.id),
-    sb.from('bids').select('job_id').eq('driver_id',user.id)]);
+    sb.from('bids').select('job_id').eq('driver_id',user.id),
+    sb.from('stripe_accounts').select('ready').eq('user_id',user.id).maybeSingle()]);
   const ok=ver&&ver.status==='approved',sent=new Set((bids||[]).map(b=>b.job_id));
   const label={none:'noch nicht eingereicht',pending:'in Prüfung',rejected:'abgelehnt'}[ver?.status];
   app.innerHTML=head()+`<p class="meta">Angemeldet als ${esc(me.name)} (Überführer)</p>`+
-  (ok?'<span class="badge ok">Verifiziert</span>':verifCard(ver))+
-  ((mine||[]).length?'<h2 style="margin-top:14px">Meine Aufträge</h2>'+mine.map(j=>`<div class="card">${jobHead(j)}<span class="badge ok">${j.status==='completed'?'Erledigt · Auszahlung von '+eur(Math.round(j.agreed_price_cents*0.9))+' wird veranlasst':'Zugesagt für '+eur(j.agreed_price_cents)}</span>${protoBox(j,'f')}${chatBox(j)}</div>`).join(''):'')+
+  (ok?'<span class="badge ok">Verifiziert</span>':verifCard(ver))+(ok?payoutCard(sa):'')+
+  ((mine||[]).length?'<h2 style="margin-top:14px">Meine Aufträge</h2>'+mine.map(j=>`<div class="card">${jobHead(j)}<span class="badge ok">${j.status==='completed'?'Erledigt · Auszahlung von '+eur(Math.round(j.agreed_price_cents*0.9))+' wird veranlasst':j.status==='paid'?'Bezahlt · du kannst starten ('+eur(j.agreed_price_cents)+')':'Zugesagt für '+eur(j.agreed_price_cents)+' · wartet auf die Zahlung des Händlers'}</span>${protoBox(j,'f')}${chatBox(j)}</div>`).join(''):'')+
   '<h2 style="margin-top:14px">Offene Aufträge</h2>'+
   ((open||[]).length?open.map(j=>`<div class="card">${jobHead(j)}<div class="meta" style="margin:6px 0">Auszahlung für dich: ${eur(Math.round(j.price_cents*0.9))} nach 10 % Servicegebühr</div>`+
     (sent.has(j.id)?'<span class="badge red">Dein Angebot liegt vor</span>':`<div class="row"><button class="pri" style="margin-top:4px" data-a="bid" data-id="${j.id}" data-p="${j.price_cents}">Für ${eur(j.price_cents)} anbieten</button></div>
@@ -207,7 +208,7 @@ function protoBox(j,me){
     h+=`<div class="card" style="margin:8px 0 0;background:var(--bg)"><b>${PH[ph]}</b> `;
     if(p){h+=`<span class="badge ok">Abgeschlossen ${new Date(p.created_at).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'})}</span><div class="meta">${p.odometer_km} km · Tank: ${esc(p.fuel)}${p.note?' · '+esc(p.note):''}</div>`+
       thumbs((p.damage_photos||[]).filter(d=>d.url).map(d=>({loc:d.location,type:d.damage_type,url:d.url})),false)}
-    else if(me==='f'&&j.status==='assigned'&&(ph==='pickup'||(protos[j.id]||{}).pickup)){const d=dr(key);
+    else if(me==='f'&&j.status==='paid'&&(ph==='pickup'||(protos[j.id]||{}).pickup)){const d=dr(key);
       h+=`<label for="km_${idp}">Kilometerstand</label><input id="km_${idp}" type="number" min="0" inputmode="numeric" data-f="${key}:km" value="${esc(d.km)}">
       <label for="fu_${idp}">Tankstand</label><select id="fu_${idp}" data-f="${key}:fuel">${opt(['Voll','3/4','1/2','1/4','Reserve'],d.fuel)}</select>
       <label>Fotos aufnehmen: Stelle, Art, dann Foto. Pflicht: Übersicht von Front, Heck, Links und Rechts. Vorhandene Schäden einzeln fotografieren.</label>
@@ -231,6 +232,12 @@ function verifCard(v){const st=v?v.status:'none';
   <label for="vf5">Polizeiliches Führungszeugnis (höchstens 3 Monate alt)</label><input id="vf5" type="file" accept="image/*,application/pdf" data-vf="fuehrungszeugnis">${f('fuehrungszeugnis')}
   <label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;font-size:14px"><input type="checkbox" data-vc style="width:auto;margin-top:3px"${vconsent?' checked':''}><span>Ich willige ein, dass Überfix diese Dokumente, auch das Führungszeugnis, einmalig zur Prüfung ansieht. Danach werden sie gelöscht.</span></label>
   <button class="pri" data-a="vsubmit">Zur Prüfung einreichen</button></div>`}
+async function api(body){
+  const {data,error}=await sb.functions.invoke('stripe-api',{body});
+  if(error){let m=error.message;try{const j=await error.context.json();if(j.error)m=j.error}catch(e){}return {error:m}}
+  return data||{}}
+function payoutCard(sa){return sa&&sa.ready?'<span class="badge ok" style="margin-left:6px">Auszahlungskonto bereit</span>':
+  `<div class="card warn"><b>Auszahlungskonto einrichten</b><div class="meta">Damit du Geld für Aufträge erhältst, richtest du bei Stripe ein Auszahlungskonto ein. Das dauert wenige Minuten.</div><button class="pri" data-a="connect">Jetzt einrichten</button><button class="link" data-a="connectrefresh">Status aktualisieren</button></div>`}
 let pendPaths={};
 async function adminView(){
   const {data}=await sb.from('driver_verifications').select('driver_id,doc_paths,submitted_at,profiles(name)').eq('status','pending').order('submitted_at');
@@ -287,7 +294,10 @@ app.addEventListener('click',async e=>{
   else if(a==='cbid'){const p=Math.round(+$('cp'+id).value*100);if(!(p>0))return alert('Bitte einen Preis eingeben.');
     const {error}=await sb.from('bids').insert({job_id:id,driver_id:user.id,price_cents:p});if(error)return fail(error);show()}
   else if(a==='done'){const noDrop=!(protos[id]||{}).drop;if(!confirm((noDrop?'Es liegt noch kein Ablieferungs-Protokoll mit Fotos vor. ':'')+'Auftrag als erledigt melden? Danach wird die Auszahlung an den Überführer veranlasst.'))return;
-    const {error}=await sb.rpc('complete_job',{p_job_id:id});if(error)return fail(error);show()}
+    const r=await api({action:'complete',job_id:id});if(r.error)return alert('Fehler: '+r.error);show()}
+  else if(a==='pay'){b.disabled=true;const r=await api({action:'checkout',job_id:id});if(r.error){b.disabled=false;return alert('Fehler: '+r.error)}location.href=r.url}
+  else if(a==='connect'){b.disabled=true;const r=await api({action:'onboard'});if(r.error){b.disabled=false;return alert('Fehler: '+r.error)}location.href=r.url}
+  else if(a==='connectrefresh'){const r=await api({action:'refresh'});if(r.error)return alert('Fehler: '+r.error);show()}
   else if(a==='admin'){adminOn=!adminOn;show()}
   else if(a==='vsubmit'){const ks=['ausweis','fuehrerschein','wohnsitz','gewerbe','fuehrungszeugnis'];
     if(ks.some(k=>!vfiles[k]))return alert('Bitte alle fünf Dokumente auswählen.');
@@ -345,7 +355,7 @@ agb:{t:'Allgemeine Geschäftsbedingungen',h:`<p class="meta">Entwurf zur Orienti
 <h3>2. Rolle von Überfix</h3><p>Überfix vermittelt zwischen Händlern und Überführern. Der Überführungsvertrag kommt nur zwischen Händler und Überführer zustande.</p>
 <h3>3. Registrierung</h3><p>Überführer müssen Ausweis, Führerschein, einen aktuellen Wohnsitznachweis, einen Gewerbeschein und ein aktuelles Führungszeugnis vorlegen. Aufträge sehen sie erst nach der Freischaltung.</p>
 <h3>4. Preise und Gebühren</h3><ul><li>Händler: 9,99 € pro Monat im ersten Jahr, danach 14,99 € pro Monat <span class="ph">[netto oder brutto klären]</span>.</li><li>Überführer: kostenlose Registrierung, 10 % Servicegebühr pro Auftrag.</li></ul>
-<h3>5. Zahlung</h3><p>Die Zahlung des Händlers läuft über einen Zahlungsanbieter <span class="ph">[Anbieter, ab Start]</span>. Meldet der Händler den Auftrag als erledigt, wird der Betrag abzüglich der Servicegebühr an den Überführer ausgezahlt.</p>
+<h3>5. Zahlung</h3><p>Die Zahlung des Händlers läuft über den Zahlungsdienstleister Stripe. Meldet der Händler den Auftrag als erledigt, wird der Betrag abzüglich der Servicegebühr an den Überführer ausgezahlt.</p>
 <h3>6. Haftung und Versicherung</h3><p>Der Überführer fährt eigenverantwortlich und benötigt ausreichenden Versicherungsschutz <span class="ph">[festlegen]</span>. Die Haftung von Überfix ist beschränkt <span class="ph">[anwaltlich prüfen]</span>.</p>
 <h3>7. Laufzeit und Kündigung</h3><p><span class="ph">[Laufzeit und Kündigungsfrist festlegen]</span></p>
 <h3>8. Schlussbestimmungen</h3><p>Es gilt deutsches Recht. Ist eine Bestimmung unwirksam, bleibt der Rest wirksam.</p>`},
@@ -357,7 +367,7 @@ impressum:{t:'Impressum',h:`<p class="meta">Rot markierte Felder musst du mit de
 datenschutz:{t:'Datenschutzerklärung',h:`<p class="meta">Entwurf zur Orientierung. Lass ihn vor dem Start rechtlich prüfen.</p>
 <h3>Verantwortlicher</h3><p>Überfix, <span class="ph">[Name, Anschrift, E-Mail]</span></p>
 <h3>Welche Daten wir verarbeiten</h3><ul><li>Konto: Name, E-Mail, Firma bzw. Region.</li><li>Aufträge, Angebote und Chat-Nachrichten zur Vertragsabwicklung.</li><li>Zahlungsdaten (Beträge, Status). Karten- und Kontodaten verarbeitet nur der Zahlungsanbieter.</li><li>Überführer: Ausweis, Führerschein, Wohnsitznachweis, Gewerbeschein und Führungszeugnis zur Prüfung auf Grundlage deiner Einwilligung. Die Dokumente werden direkt nach der Prüfung gelöscht, gespeichert wird nur das Ergebnis.</li></ul>
-<h3>Dienstleister</h3><p>Hosting und Datenbank <span class="ph">[Anbieter, Standort]</span>, Zahlungsabwicklung <span class="ph">[Anbieter]</span>, Identitätsprüfung <span class="ph">[Anbieter]</span>.</p>
+<h3>Dienstleister</h3><p>Hosting und Datenbank <span class="ph">[Anbieter, Standort]</span>, Zahlungsabwicklung Stripe, Identitätsprüfung <span class="ph">[Anbieter]</span>.</p>
 <h3>Speicherdauer</h3><p>Bis zur Löschung des Kontos, Rechnungen und Belege nach den gesetzlichen Fristen.</p>
 <h3>Deine Rechte</h3><p>Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit, Widerspruch und Beschwerde bei der Aufsichtsbehörde <span class="ph">[zuständige Behörde]</span>.</p>`}
 };
@@ -371,6 +381,13 @@ document.addEventListener('click',e=>{
   $('pgc').innerHTML='<h2>'+P.t+'</h2>'+P.h;$('pg').hidden=false;$('pg').scrollTop=0;
 });
 
+(function(){const q=new URLSearchParams(location.search),p=q.get('pay'),c=q.get('connect');
+  if(!p&&!c)return;history.replaceState(null,'',location.pathname);
+  setTimeout(async()=>{
+    if(c&&user)await api({action:'refresh'});
+    if(p==='ok')alert('Danke, die Zahlung ist eingegangen. Der Auftrag erscheint in wenigen Sekunden als bezahlt.');
+    if(p==='cancel')alert('Die Zahlung wurde abgebrochen.');
+    if(user)show()},2000)})();
 sb.auth.onAuthStateChange((ev,s)=>{
   if(ev==='PASSWORD_RECOVERY'){recovery=true;setUser(s?.user);return}
   if(ev==='INITIAL_SESSION'||ev==='SIGNED_IN'||ev==='SIGNED_OUT'){if((s?.user?.id||null)!==(user?.id||null)||ev==='INITIAL_SESSION')setUser(s?.user)}});
